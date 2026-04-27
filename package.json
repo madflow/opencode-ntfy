@@ -1,0 +1,41 @@
+{
+  "name": "@madflow/opencode-ntfy",
+  "version": "0.1.0",
+  "description": "OpenCode plugin that sends ntfy notifications for session completion and errors.",
+  "license": "MIT",
+  "type": "module",
+  "main": "./dist/server.js",
+  "types": "./dist/server.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/server.d.ts",
+      "import": "./dist/server.js",
+      "default": "./dist/server.js"
+    },
+    "./server": {
+      "types": "./dist/server.d.ts",
+      "import": "./dist/server.js",
+      "default": "./dist/server.js"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc -p tsconfig.json",
+    "test": "bun test"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "dependencies": {
+    "@opencode-ai/plugin": "^1.14.28"
+  },
+  "devDependencies": {
+    "bun-types": "^1.3.13",
+    "typescript": "^6.0.3"
+  }
+}
