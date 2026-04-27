@@ -22,7 +22,8 @@ Create `.opencode/ntfy.json` in your project:
   "server": "https://ntfy.sh",
   "topic": "my-opencode-notifications",
   "accessToken": "tk_your_access_token",
-  "events": ["session.idle", "session.error"]
+  "events": ["session.idle", "session.error"],
+  "minSessionDurationSeconds": 30
 }
 ```
 
@@ -34,6 +35,7 @@ Configuration fields:
 | `topic` | yes | none | ntfy topic name |
 | `accessToken` | no | none | ntfy bearer token for protected topics |
 | `events` | no | `['session.idle', 'session.error']` | events to notify on |
+| `minSessionDurationSeconds` | no | `30` | Only send notifications for sessions lasting at least this many seconds. Set to `0` to disable the filter. |
 
 If `.opencode/ntfy.json` is missing, invalid, or does not contain a `topic`, the plugin logs a warning and disables itself. It does not throw.
 

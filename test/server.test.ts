@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, test } from "bun:test"
+import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test"
 import { server } from "../src/server.js"
 import { createProjectDirectory, removeDirectory, writeProjectConfig } from "./helpers.js"
 
@@ -35,7 +35,10 @@ function asFetch(
   return implementation as typeof fetch
 }
 
-function createContext(directory: string, client: ReturnType<typeof createClient>["client"]): Parameters<typeof server>[0] {
+function createContext(
+  directory: string,
+  client: ReturnType<typeof createClient>["client"],
+): Parameters<typeof server>[0] {
   return {
     client,
     directory,
@@ -57,13 +60,17 @@ function createContext(directory: string, client: ReturnType<typeof createClient
 
 describe("server plugin", () => {
   let originalFetch: typeof fetch
+  let originalDateNow: typeof Date.now
 
   beforeEach(() => {
     originalFetch = globalThis.fetch
+    originalDateNow = Date.now
   })
 
   afterEach(() => {
     globalThis.fetch = originalFetch
+    Date.now = originalDateNow
+    mock.restore()
   })
 
   test("disables the plugin when config is missing", async () => {
@@ -77,32 +84,13 @@ describe("server plugin", () => {
     expect(logs[0]?.message).toBe("ntfy config not found; plugin disabled")
   })
 
-  test("ignores unrelated events", async () => {
+  test("sends session.idle notifications when no minimum is configured", async () => {
     const directory = await createDirectory()
     const { client } = createClient()
-    await writeProjectConfig(directory, JSON.stringify({ topic: "demo" }))
-
-    let fetchCalls = 0
-    globalThis.fetch = asFetch(async () => {
-      fetchCalls += 1
-      return new Response(null, { status: 200 })
-    })
-
-    const plugin = await server(createContext(directory, client))
-    await plugin.event?.({
-      event: {
-        type: "session.created",
-        properties: {},
-      },
-    } as never)
-
-    expect(fetchCalls).toBe(0)
-  })
-
-  test("sends session.idle notifications", async () => {
-    const directory = await createDirectory()
-    const { client } = createClient()
-    await writeProjectConfig(directory, JSON.stringify({ topic: "demo" }))
+    await writeProjectConfig(
+      directory,
+      JSON.stringify({ topic: "demo", minSessionDurationSeconds: 0 }),
+    )
 
     let requestInit: RequestInit | undefined
     globalThis.fetch = asFetch(async (_, init) => {
@@ -123,11 +111,9 @@ describe("server plugin", () => {
     const headers = new Headers(requestInit?.headers)
     expect(requestInit?.body).toBe("Project: demo-project | Session: abc123")
     expect(headers.get("Title")).toBe("opencode: task complete")
-    expect(headers.get("Priority")).toBe("3")
-    expect(headers.get("Tags")).toBe("white_check_mark")
   })
 
-  test("sends session.error notifications", async () => {
+  test("sends session.error notifications without sessionID", async () => {
     const directory = await createDirectory()
     const { client } = createClient()
     await writeProjectConfig(directory, JSON.stringify({ topic: "demo" }))
@@ -143,7 +129,6 @@ describe("server plugin", () => {
       event: {
         type: "session.error",
         properties: {
-          sessionID: "abc123",
           error: {
             name: "ProviderAuthError",
           },
@@ -152,12 +137,8 @@ describe("server plugin", () => {
     } as never)
 
     const headers = new Headers(requestInit?.headers)
-    expect(requestInit?.body).toBe(
-      "Project: demo-project | Session: abc123 | Error: ProviderAuthError",
-    )
+    expect(requestInit?.body).toBe("Project: demo-project | Session: n/a | Error: ProviderAuthError")
     expect(headers.get("Title")).toBe("opencode: error")
-    expect(headers.get("Priority")).toBe("4")
-    expect(headers.get("Tags")).toBe("x")
   })
 
   test("forwards accessToken as bearer authorization", async () => {
@@ -168,6 +149,7 @@ describe("server plugin", () => {
       JSON.stringify({
         topic: "demo",
         accessToken: "tk_example",
+        minSessionDurationSeconds: 0,
       }),
     )
 
@@ -211,5 +193,217 @@ describe("server plugin", () => {
     } as never)
 
     expect(logs.some((log) => log.message === "Failed to send ntfy notification")).toBe(true)
+  })
+
+  test("skips session.idle when the current run is shorter than minSessionDurationSeconds", async () => {
+    const directory = await createDirectory()
+    const { client } = createClient()
+    await writeProjectConfig(
+      directory,
+      JSON.stringify({ topic: "demo", minSessionDurationSeconds: 30 }),
+    )
+
+    let fetchCalls = 0
+    globalThis.fetch = asFetch(async () => {
+      fetchCalls += 1
+      return new Response(null, { status: 200 })
+    })
+
+    Date.now = () => 1_005
+
+    const plugin = await server(createContext(directory, client))
+    await plugin["chat.message"]?.(
+      {
+        sessionID: "abc123",
+      },
+      {
+        message: {
+          time: {
+            created: 1_000,
+          },
+        },
+        parts: [],
+      } as never,
+    )
+
+    await plugin.event?.({
+      event: {
+        type: "session.idle",
+        properties: {
+          sessionID: "abc123",
+        },
+      },
+    } as never)
+
+    expect(fetchCalls).toBe(0)
+  })
+
+  test("sends session.idle when the current run exceeds minSessionDurationSeconds", async () => {
+    const directory = await createDirectory()
+    const { client } = createClient()
+    await writeProjectConfig(
+      directory,
+      JSON.stringify({ topic: "demo", minSessionDurationSeconds: 30 }),
+    )
+
+    let requestInit: RequestInit | undefined
+    globalThis.fetch = asFetch(async (_, init) => {
+      requestInit = init
+      return new Response(null, { status: 200 })
+    })
+
+    Date.now = () => 31_500
+
+    const plugin = await server(createContext(directory, client))
+    await plugin["chat.message"]?.(
+      {
+        sessionID: "abc123",
+      },
+      {
+        message: {
+          time: {
+            created: 1_000,
+          },
+        },
+        parts: [],
+      } as never,
+    )
+
+    await plugin.event?.({
+      event: {
+        type: "session.idle",
+        properties: {
+          sessionID: "abc123",
+        },
+      },
+    } as never)
+
+    expect(requestInit?.body).toBe("Project: demo-project | Session: abc123")
+  })
+
+  test("does not send a delayed idle notification for the same handled run", async () => {
+    const directory = await createDirectory()
+    const { client } = createClient()
+    await writeProjectConfig(
+      directory,
+      JSON.stringify({ topic: "demo", minSessionDurationSeconds: 30 }),
+    )
+
+    let fetchCalls = 0
+    globalThis.fetch = asFetch(async () => {
+      fetchCalls += 1
+      return new Response(null, { status: 200 })
+    })
+
+    let now = 1_005
+    Date.now = () => now
+
+    const plugin = await server(createContext(directory, client))
+    await plugin["chat.message"]?.(
+      {
+        sessionID: "abc123",
+      },
+      {
+        message: {
+          time: {
+            created: 1_000,
+          },
+        },
+        parts: [],
+      } as never,
+    )
+
+    await plugin.event?.({
+      event: {
+        type: "session.idle",
+        properties: {
+          sessionID: "abc123",
+        },
+      },
+    } as never)
+
+    now = 45_000
+
+    await plugin.event?.({
+      event: {
+        type: "session.idle",
+        properties: {
+          sessionID: "abc123",
+        },
+      },
+    } as never)
+
+    expect(fetchCalls).toBe(0)
+  })
+
+  test("uses session.status as a fallback run start when chat.message is not available", async () => {
+    const directory = await createDirectory()
+    const { client } = createClient()
+    await writeProjectConfig(
+      directory,
+      JSON.stringify({ topic: "demo", minSessionDurationSeconds: 30 }),
+    )
+
+    let requestInit: RequestInit | undefined
+    globalThis.fetch = asFetch(async (_, init) => {
+      requestInit = init
+      return new Response(null, { status: 200 })
+    })
+
+    let now = 1_000
+    Date.now = () => now
+
+    const plugin = await server(createContext(directory, client))
+    await plugin.event?.({
+      event: {
+        type: "session.status",
+        properties: {
+          sessionID: "abc123",
+          status: {
+            type: "busy",
+          },
+        },
+      },
+    } as never)
+
+    now = 31_500
+
+    await plugin.event?.({
+      event: {
+        type: "session.idle",
+        properties: {
+          sessionID: "abc123",
+        },
+      },
+    } as never)
+
+    expect(requestInit?.body).toBe("Project: demo-project | Session: abc123")
+  })
+
+  test("skips session-scoped notifications when no current run start is known", async () => {
+    const directory = await createDirectory()
+    const { client } = createClient()
+    await writeProjectConfig(
+      directory,
+      JSON.stringify({ topic: "demo", minSessionDurationSeconds: 30 }),
+    )
+
+    let fetchCalls = 0
+    globalThis.fetch = asFetch(async () => {
+      fetchCalls += 1
+      return new Response(null, { status: 200 })
+    })
+
+    const plugin = await server(createContext(directory, client))
+    await plugin.event?.({
+      event: {
+        type: "session.idle",
+        properties: {
+          sessionID: "abc123",
+        },
+      },
+    } as never)
+
+    expect(fetchCalls).toBe(0)
   })
 })

@@ -1,7 +1,12 @@
 import { afterEach, describe, expect, test } from "bun:test"
 import { mkdir } from "node:fs/promises"
 import { join } from "node:path"
-import { DEFAULT_EVENTS, DEFAULT_SERVER, loadConfig } from "../src/config.js"
+import {
+  DEFAULT_EVENTS,
+  DEFAULT_MIN_SESSION_DURATION_SECONDS,
+  DEFAULT_SERVER,
+  loadConfig,
+} from "../src/config.js"
 import { createProjectDirectory, removeDirectory, writeProjectConfig } from "./helpers.js"
 
 const directories: string[] = []
@@ -67,6 +72,7 @@ describe("loadConfig", () => {
       server: DEFAULT_SERVER,
       topic: "demo",
       events: [...DEFAULT_EVENTS],
+      minSessionDurationSeconds: DEFAULT_MIN_SESSION_DURATION_SECONDS,
     })
     expect(result.warnings).toHaveLength(0)
   })
@@ -88,6 +94,7 @@ describe("loadConfig", () => {
       server: "https://example.com",
       topic: "demo",
       events: ["session.idle", "session.error"],
+      minSessionDurationSeconds: DEFAULT_MIN_SESSION_DURATION_SECONDS,
     })
     expect(result.warnings[0]?.message).toContain("unsupported ntfy events")
   })
@@ -108,6 +115,7 @@ describe("loadConfig", () => {
       server: "https://example.com/ntfy",
       topic: "demo",
       events: [...DEFAULT_EVENTS],
+      minSessionDurationSeconds: DEFAULT_MIN_SESSION_DURATION_SECONDS,
     })
     expect(result.warnings[0]?.message).toContain("should not include query or fragment")
   })
@@ -129,6 +137,7 @@ describe("loadConfig", () => {
       topic: "demo",
       accessToken: "tk_example",
       events: [...DEFAULT_EVENTS],
+      minSessionDurationSeconds: DEFAULT_MIN_SESSION_DURATION_SECONDS,
     })
   })
 
@@ -149,7 +158,71 @@ describe("loadConfig", () => {
       server: DEFAULT_SERVER,
       topic: "demo",
       events: [...DEFAULT_EVENTS],
+      minSessionDurationSeconds: DEFAULT_MIN_SESSION_DURATION_SECONDS,
     })
     expect(result.warnings).toHaveLength(3)
+  })
+
+  test("parses custom minSessionDurationSeconds", async () => {
+    const directory = await createDirectory()
+    await writeProjectConfig(
+      directory,
+      JSON.stringify({
+        topic: "demo",
+        minSessionDurationSeconds: 120,
+      }),
+    )
+
+    const result = await loadConfig(directory)
+
+    expect(result.config).toEqual({
+      server: DEFAULT_SERVER,
+      topic: "demo",
+      events: [...DEFAULT_EVENTS],
+      minSessionDurationSeconds: 120,
+    })
+    expect(result.warnings).toHaveLength(0)
+  })
+
+  test("falls back to default for invalid minSessionDurationSeconds", async () => {
+    const directory = await createDirectory()
+    await writeProjectConfig(
+      directory,
+      JSON.stringify({
+        topic: "demo",
+        minSessionDurationSeconds: "not-a-number",
+      }),
+    )
+
+    const result = await loadConfig(directory)
+
+    expect(result.config).toEqual({
+      server: DEFAULT_SERVER,
+      topic: "demo",
+      events: [...DEFAULT_EVENTS],
+      minSessionDurationSeconds: DEFAULT_MIN_SESSION_DURATION_SECONDS,
+    })
+    expect(result.warnings[0]?.message).toContain("Invalid minSessionDurationSeconds")
+  })
+
+  test("falls back to default for negative minSessionDurationSeconds", async () => {
+    const directory = await createDirectory()
+    await writeProjectConfig(
+      directory,
+      JSON.stringify({
+        topic: "demo",
+        minSessionDurationSeconds: -5,
+      }),
+    )
+
+    const result = await loadConfig(directory)
+
+    expect(result.config).toEqual({
+      server: DEFAULT_SERVER,
+      topic: "demo",
+      events: [...DEFAULT_EVENTS],
+      minSessionDurationSeconds: DEFAULT_MIN_SESSION_DURATION_SECONDS,
+    })
+    expect(result.warnings[0]?.message).toContain("Negative minSessionDurationSeconds")
   })
 })

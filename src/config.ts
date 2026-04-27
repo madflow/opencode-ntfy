@@ -4,6 +4,7 @@ import { join } from "node:path"
 export const CONFIG_RELATIVE_PATH = ".opencode/ntfy.json"
 export const DEFAULT_SERVER = "https://ntfy.sh"
 export const DEFAULT_EVENTS = ["session.idle", "session.error"] as const
+export const DEFAULT_MIN_SESSION_DURATION_SECONDS = 30
 
 export type SupportedEvent = (typeof DEFAULT_EVENTS)[number]
 
@@ -12,6 +13,7 @@ export interface NtfyConfig {
   topic: string
   accessToken?: string
   events: SupportedEvent[]
+  minSessionDurationSeconds: number
 }
 
 export interface ConfigWarning {
@@ -151,6 +153,30 @@ function normalizeEvents(value: unknown, warnings: ConfigWarning[]): SupportedEv
   return [...filtered]
 }
 
+function normalizeMinSessionDurationSeconds(value: unknown, warnings: ConfigWarning[]): number {
+  if (value === undefined) {
+    return DEFAULT_MIN_SESSION_DURATION_SECONDS
+  }
+
+  if (typeof value !== "number" || Number.isNaN(value)) {
+    warnings.push({
+      message: "Invalid minSessionDurationSeconds in .opencode/ntfy.json; using default",
+      extra: { providedType: typeof value },
+    })
+    return DEFAULT_MIN_SESSION_DURATION_SECONDS
+  }
+
+  if (value < 0) {
+    warnings.push({
+      message: "Negative minSessionDurationSeconds in .opencode/ntfy.json; using default",
+      extra: { providedValue: value },
+    })
+    return DEFAULT_MIN_SESSION_DURATION_SECONDS
+  }
+
+  return value
+}
+
 export async function loadConfig(directory: string): Promise<LoadConfigResult> {
   const configPath = join(directory, ".opencode", "ntfy.json")
 
@@ -229,6 +255,10 @@ export async function loadConfig(directory: string): Promise<LoadConfigResult> {
   const server = normalizeServer(parsed.server, warnings)
   const accessToken = typeof parsed.accessToken === "string" ? parsed.accessToken.trim() : ""
   const events = normalizeEvents(parsed.events, warnings)
+  const minSessionDurationSeconds = normalizeMinSessionDurationSeconds(
+    parsed.minSessionDurationSeconds,
+    warnings,
+  )
 
   return {
     config: {
@@ -236,6 +266,7 @@ export async function loadConfig(directory: string): Promise<LoadConfigResult> {
       topic,
       ...(accessToken ? { accessToken } : {}),
       events,
+      minSessionDurationSeconds,
     },
     warnings,
   }
