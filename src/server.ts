@@ -79,16 +79,38 @@ function getErrorName(error: unknown): string {
   return "UnknownError"
 }
 
-function buildIdleMessage(projectID: string, sessionID: string): string {
-  return `Project: ${projectID} | Session: ${sessionID}`
+function buildIdleMessage(projectID: string, sessionLabel: string): string {
+  return `Project: ${projectID} | Session: ${sessionLabel}`
 }
 
 function buildErrorMessage(
   projectID: string,
-  sessionID: string | undefined,
+  sessionLabel: string,
   errorName: string,
 ): string {
-  return `Project: ${projectID} | Session: ${sessionID ?? "n/a"} | Error: ${errorName}`
+  return `Project: ${projectID} | Session: ${sessionLabel} | Error: ${errorName}`
+}
+
+async function getSessionLabel(
+  client: PluginContext["client"],
+  sessionID: string | undefined,
+): Promise<string> {
+  if (!sessionID) {
+    return "n/a"
+  }
+
+  try {
+    const result = await client.session.get({
+      path: {
+        id: sessionID,
+      },
+    })
+    const title = result.data?.title?.trim()
+
+    return title || sessionID
+  } catch {
+    return sessionID
+  }
 }
 
 function buildNotificationAuth(config: NtfyConfig): Pick<NtfyConfig, "accessToken"> | {} {
@@ -237,12 +259,14 @@ export const server: Plugin = async ({ client, project, directory }) => {
             return
           }
 
+          const sessionLabel = await getSessionLabel(client, sessionID)
+
           const result = await sendNotification({
             server: config.server,
             topic: config.topic,
             ...buildNotificationAuth(config),
             title: "opencode: task complete",
-            message: buildIdleMessage(project.id, sessionID),
+            message: buildIdleMessage(project.id, sessionLabel),
             priority: 3,
             tags: ["white_check_mark"],
           })
@@ -266,6 +290,8 @@ export const server: Plugin = async ({ client, project, directory }) => {
             return
           }
 
+          const sessionLabel = await getSessionLabel(client, sessionID)
+
           const result = await sendNotification({
             server: config.server,
             topic: config.topic,
@@ -273,7 +299,7 @@ export const server: Plugin = async ({ client, project, directory }) => {
             title: "opencode: error",
             message: buildErrorMessage(
               project.id,
-              sessionID,
+              sessionLabel,
               getErrorName(event.properties.error),
             ),
             priority: 4,

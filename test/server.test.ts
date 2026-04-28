@@ -3,6 +3,11 @@ import { server } from "../src/server.js"
 import { createProjectDirectory, removeDirectory, writeProjectConfig } from "./helpers.js"
 
 const directories: string[] = []
+const DEFAULT_SESSION_TITLE = "Build release flow"
+
+interface CreateClientOptions {
+  sessionGet?: (sessionID: string) => Promise<unknown>
+}
 
 afterEach(async () => {
   await Promise.all(directories.splice(0).map((directory) => removeDirectory(directory)))
@@ -14,7 +19,7 @@ async function createDirectory(): Promise<string> {
   return directory
 }
 
-function createClient() {
+function createClient(options: CreateClientOptions = {}) {
   const logs: Array<Record<string, unknown>> = []
 
   return {
@@ -24,6 +29,15 @@ function createClient() {
         log: async ({ body }: { body: Record<string, unknown> }) => {
           logs.push(body)
         },
+      },
+      session: {
+        get: ({ path }: { path: { id: string } }) =>
+          options.sessionGet?.(path.id) ??
+          Promise.resolve({
+            data: {
+              title: DEFAULT_SESSION_TITLE,
+            },
+          }),
       },
     } as unknown as Parameters<typeof server>[0]["client"],
   }
@@ -109,8 +123,39 @@ describe("server plugin", () => {
     } as never)
 
     const headers = new Headers(requestInit?.headers)
-    expect(requestInit?.body).toBe("Project: demo-project | Session: abc123")
+    expect(requestInit?.body).toBe(`Project: demo-project | Session: ${DEFAULT_SESSION_TITLE}`)
     expect(headers.get("Title")).toBe("opencode: task complete")
+  })
+
+  test("falls back to the session ID when the session title cannot be loaded", async () => {
+    const directory = await createDirectory()
+    const { client } = createClient({
+      sessionGet: async () => {
+        throw new Error("session lookup failed")
+      },
+    })
+    await writeProjectConfig(
+      directory,
+      JSON.stringify({ topic: "demo", minSessionDurationSeconds: 0 }),
+    )
+
+    let requestInit: RequestInit | undefined
+    globalThis.fetch = asFetch(async (_, init) => {
+      requestInit = init
+      return new Response(null, { status: 200 })
+    })
+
+    const plugin = await server(createContext(directory, client))
+    await plugin.event?.({
+      event: {
+        type: "session.idle",
+        properties: {
+          sessionID: "abc123",
+        },
+      },
+    } as never)
+
+    expect(requestInit?.body).toBe("Project: demo-project | Session: abc123")
   })
 
   test("sends session.error notifications without sessionID", async () => {
@@ -278,7 +323,7 @@ describe("server plugin", () => {
       },
     } as never)
 
-    expect(requestInit?.body).toBe("Project: demo-project | Session: abc123")
+    expect(requestInit?.body).toBe(`Project: demo-project | Session: ${DEFAULT_SESSION_TITLE}`)
   })
 
   test("does not send a delayed idle notification for the same handled run", async () => {
@@ -377,7 +422,7 @@ describe("server plugin", () => {
       },
     } as never)
 
-    expect(requestInit?.body).toBe("Project: demo-project | Session: abc123")
+    expect(requestInit?.body).toBe(`Project: demo-project | Session: ${DEFAULT_SESSION_TITLE}`)
   })
 
   test("skips session-scoped notifications when no current run start is known", async () => {

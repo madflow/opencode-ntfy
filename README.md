@@ -49,9 +49,11 @@ For protected ntfy topics, the plugin sends `Authorization: Bearer <accessToken>
 Example notifications:
 
 ```text
-Project: my-project | Session: abc123
-Project: my-project | Session: abc123 | Error: ProviderAuthError
+Project: my-project | Session: Build release flow
+Project: my-project | Session: Build release flow | Error: ProviderAuthError
 ```
+
+The plugin uses the session title when available and falls back to the session ID if the title cannot be loaded.
 
 ## Development
 
